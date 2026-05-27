@@ -1,0 +1,34 @@
+# bias-audit -- Go flagship standard .gitignore (M6 2026-05-27)
+# Cohort-port from inception per R174 5-of-5 strict (anchor: canopy).
+
+# Go build artefacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# /bias-audit = root-level build artefact (from `go build .` or
+# `go build -o bias-audit ./cmd/bias-audit`); root-anchored so it does
+# NOT match the cmd/bias-audit/ source directory.
+/bias-audit
+
+# Go test + coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Editor scratch
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Defensive -- no secrets in repo (bias-audit has zero env reads today
+# but Phase 2+ tenant-onboarding will introduce credentials; this
+# defensive guard ships ahead of that work so a misconfigured local
+# .env never lands in version control).
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,54 @@
+name: CI
+
+# R142 pure-Go CI for bias-audit -- NYC LL144 AEDT + EU AI Act
+# HR-bias-audit + annual independent audit ledger CLI with zero
+# runtime dependencies (no HTTP listener, no env reads, no DB, no
+# auth surface; offline CLI + R174 5-of-5 cohort packages +
+# R153.A R-REGULATORY-ESCAPE-INVARIANT-WITH-AUDIT-LEDGER 3rd
+# saturator).
+#
+# Cohort-port FROM INCEPTION per R174 5-of-5 strict (memoria +
+# conjure precedent). bias-audit is the SaaS productisation of
+# canopy's NYC LL144 + EEOC R74 dual-gate.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  go-build-test:
+    # Pure-Go CLI: cmd/bias-audit + 7 internal packages (auditledger /
+    # firewall / honest / legal / lore / manifest / mirrormark).
+    # go.mod: github.com/davly/bias-audit / go 1.24.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test ./... -count=1
+      - name: go vet
+        run: go vet ./...
+
+  go-security:
+    # R142 gating mirror for Go -- gosec (SAST) + govulncheck (CVE).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: gosec SAST
+        # -severity medium gates medium-or-worse findings.
+        run: gosec -severity medium ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
