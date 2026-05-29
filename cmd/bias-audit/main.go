@@ -12,6 +12,7 @@
 //
 //	advisories               List the 5 canonical R143 honest advisories
 //	cadence-check            Report annual-cadence compliance per tenant×AEDT
+//	evidence                 Export the audit ledger as a .evidence bundle
 //	footer                   Print a named legal footer body
 //	manifest                 Print R150 manifest entries
 //	kat1                     Print KAT-1 cohort hex + OpenSSL recipe
@@ -31,6 +32,7 @@ import (
 	"github.com/davly/bias-audit/internal/lore"
 	"github.com/davly/bias-audit/internal/manifest"
 	"github.com/davly/bias-audit/internal/mirrormark"
+	"github.com/davly/limitless-evidence-bundle/pkg/evidence"
 )
 
 const version = "0.1.0-phase1-scaffold"
@@ -41,6 +43,8 @@ func usage() {
 Commands:
   advisories                  List the 5 canonical R143 honest advisories
   cadence-check               Report annual-cadence compliance (demo, in-memory)
+  evidence                    Export the audit ledger as a regulator-readable
+                              .evidence bundle (demo, in-memory)
   footer <kind>               Print a named legal footer body
                               kind ∈ {liability, candidate-notice, terms-of-use}
   manifest                    Print R150 manifest entries
@@ -61,7 +65,8 @@ Examples:
   bias-audit advisories
   bias-audit footer liability
   bias-audit kat1
-  bias-audit cadence-check`)
+  bias-audit cadence-check
+  bias-audit evidence`)
 }
 
 func main() {
@@ -91,6 +96,13 @@ func main() {
 	case "cadence-check":
 		_ = fs.Parse(rest)
 		demoCadenceCheck()
+
+	case "evidence":
+		_ = fs.Parse(rest)
+		if err := demoEvidenceExport(); err != nil {
+			fmt.Fprintf(os.Stderr, "evidence export failed: %v\n", err)
+			os.Exit(3)
+		}
 
 	case "footer":
 		_ = fs.Parse(rest)
@@ -229,4 +241,91 @@ func demoCadenceCheck() {
 		}
 	}
 	fmt.Println("Mirror-Mark verify: PASS for all ledger entries.")
+}
+
+// demoEvidenceExport — illustrate the additive `.evidence`-bundle export
+// path over a small in-memory ledger. bias-audit is the SECOND flagship
+// consumer of the limitless-evidence-bundle SPEC v1 format (Folio was the
+// first). The export is read-only over the ledger; production hosts will
+// run it over a persistent backing store.
+//
+// Unlike demoCadenceCheck (which uses the zero/KAT corpus), this demo MUST
+// use a NON-ZERO corpus — a `.evidence` bundle's whole value is that it
+// cold-verifies, and ExportEvidenceSnapshot refuses a placeholder corpus
+// (ErrEvidenceNoCorpus). We seed a deterministic non-zero corpus + key so
+// the printed bundle re-verifies on any machine.
+func demoEvidenceExport() error {
+	// Deterministic non-zero demo corpus + key. NOT production secrets — the
+	// loud `_NOT_FOR_PRODUCTION` token makes any leaked-to-prod use grep-loud.
+	var corpus [sha256.Size]byte
+	for i := range corpus {
+		corpus[i] = 0xC4
+	}
+	key := []byte("iik_demo_BIAS_AUDIT_NOT_FOR_PRODUCTION")
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+
+	l := auditledger.New(corpus, key)
+
+	annual := auditledger.Entry{
+		TenantID:               "tenant_acme",
+		AEDTSystemID:           "aedt_recruiter_v2",
+		EntryType:              auditledger.EntryTypeNYCLL144AnnualAudit,
+		AuditPeriodStart:       now.AddDate(-1, 0, 0),
+		AuditPeriodEnd:         now,
+		IndependentAuditorName: "Acme Independent Bias Auditors LLP",
+		SignoffStatus:          auditledger.SignoffAttested,
+		SignoffDate:            now,
+		SummaryHash:            "demo_summary_hash",
+		PublicPostingURL:       "https://acme.example/aedt-audit-2026.pdf",
+	}
+	if _, err := l.Append(annual, now); err != nil {
+		return fmt.Errorf("append annual: %w", err)
+	}
+
+	conformity := auditledger.Entry{
+		TenantID:               "tenant_acme",
+		AEDTSystemID:           "aedt_recruiter_v2",
+		EntryType:              auditledger.EntryTypeEUAIActConformityAssessment,
+		AuditPeriodStart:       now.AddDate(0, -2, 0),
+		AuditPeriodEnd:         now,
+		IndependentAuditorName: "EU Notified Body 1234",
+		SignoffStatus:          auditledger.SignoffPending,
+		SummaryHash:            "demo_conformity_hash",
+	}
+	if _, err := l.Append(conformity, now); err != nil {
+		return fmt.Errorf("append conformity: %w", err)
+	}
+
+	export, err := l.ExportEvidenceSnapshot(auditledger.EvidenceScope{}, now)
+	if err != nil {
+		return err
+	}
+
+	// Independent cold-verify via the evidence-bundle repo's OWN full chain
+	// (KAT-1 + content-hash + Mirror-Mark) — exactly what a regulator runs.
+	res := evidence.Verify(export.Bundle, evidence.ModeFull, export.PayloadBytes, key)
+
+	fmt.Println("bias-audit .evidence-bundle export demo (SPEC v1 consumer #2)")
+	fmt.Println()
+	fmt.Printf("Ledger length:  %d entries\n", l.Len())
+	fmt.Printf("Bundle bytes:   %d\n", len(export.Bundle))
+	fmt.Printf("Payload bytes:  %d\n", len(export.PayloadBytes))
+	fmt.Printf("Verify class:   %s (verdict=%s exit=%d)\n", res.Class, res.Verdict, res.ExitCode)
+	fmt.Printf("  KAT-1:        %v\n", res.KAT1Verified)
+	fmt.Printf("  content-hash: %v\n", res.ContentHashVerified)
+	fmt.Printf("  Mirror-Mark:  %v\n", res.MirrorMarkVerified)
+	if res.Class != "PASS" {
+		return fmt.Errorf("self full-verify did not PASS: class=%s verdict=%s failures=%v", res.Class, res.Verdict, res.Failures)
+	}
+	fmt.Println()
+	fmt.Println("---BEGIN .evidence BUNDLE---")
+	fmt.Print(string(export.Bundle))
+	if len(export.Bundle) > 0 && export.Bundle[len(export.Bundle)-1] != '\n' {
+		fmt.Println()
+	}
+	fmt.Println("---END .evidence BUNDLE---")
+	fmt.Println()
+	fmt.Println("PASS: bias-audit emitted a cold-verifiable .evidence bundle and the")
+	fmt.Println("      evidence-bundle repo's own ModeFull verifier accepts it.")
+	return nil
 }
