@@ -14,10 +14,14 @@ import (
 )
 
 // ExpectedPackages returns the canonical list of internal/ packages
-// bias-audit ships as of M6 (2026-05-27 launch).
+// bias-audit ships.
 //
-// 7 packages from inception per R174 5-of-5:
+// 7 packages from inception per R174 5-of-5 (M6, 2026-05-27 launch):
 // auditledger / firewall / honest / legal / lore / manifest / mirrormark.
+//
+// + mcpserver (2026-06-02): the additive Nexus-facing /mcp/tools producer
+// exposing the auditledger engine as the `bias-audit.compliance_audit_ledger`
+// capability. Purely additive — it changes no existing package.
 func ExpectedPackages() []string {
 	return []string{
 		"auditledger",
@@ -26,13 +30,21 @@ func ExpectedPackages() []string {
 		"legal",
 		"lore",
 		"manifest",
+		"mcpserver",
 		"mirrormark",
 	}
 }
 
+// ExpectedBinaries returns the canonical list of cmd/ binaries bias-audit
+// ships.
+//
+//   - bias-audit (M6): the Phase-1 demo CLI (in-memory ledger subcommands).
+//   - bias-audit-server (2026-06-02): the Nexus-facing MCP-tool producer
+//     binary serving GET/POST /mcp/tools over the auditledger engine.
 func ExpectedBinaries() []string {
 	return []string{
 		"bias-audit",
+		"bias-audit-server",
 	}
 }
 
