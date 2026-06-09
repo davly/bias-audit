@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/davly/bias-audit/internal/auditledger"
+	"github.com/davly/bias-audit/internal/fourfifths"
 	"github.com/davly/bias-audit/internal/honest"
 	"github.com/davly/bias-audit/internal/legal"
 	"github.com/davly/bias-audit/internal/lore"
@@ -41,6 +42,7 @@ func usage() {
 Commands:
   advisories                  List the 5 canonical R143 honest advisories
   cadence-check               Report annual-cadence compliance (demo, in-memory)
+  four-fifths                 EEOC four-fifths adverse-impact SIGNAL (demo; not a determination)
   footer <kind>               Print a named legal footer body
                               kind ∈ {liability, candidate-notice, terms-of-use}
   manifest                    Print R150 manifest entries
@@ -91,6 +93,10 @@ func main() {
 	case "cadence-check":
 		_ = fs.Parse(rest)
 		demoCadenceCheck()
+
+	case "four-fifths":
+		_ = fs.Parse(rest)
+		demoFourFifths()
 
 	case "footer":
 		_ = fs.Parse(rest)
@@ -156,6 +162,59 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// demoFourFifths — illustrate the EEOC four-fifths-rule adverse-impact SIGNAL
+// over a demo selection procedure, and stamp the result into the audit ledger
+// (activating EntryTypeEEOCFourFifthsImpact + SignoffNonApplicable + SummaryHash).
+// A SIGNAL against the published rule, never a legal determination.
+func demoFourFifths() {
+	groups := []fourfifths.GroupOutcome{
+		{Group: "group_a_reference", Applicants: 100, Selected: 80}, // rate 0.80
+		{Group: "group_b", Applicants: 100, Selected: 45},           // ratio 0.5625 -> below
+		{Group: "group_c", Applicants: 120, Selected: 84},           // rate 0.70 -> ratio 0.875
+	}
+	fmt.Println("EEOC four-fifths-rule adverse-impact SIGNAL (29 C.F.R. § 1607.4(D))")
+	fmt.Printf("demo selection procedure: aedt_recruiter_v2\n\n")
+	for _, r := range fourfifths.ImpactRatios(groups) {
+		rate, ratio := "n/a", "n/a"
+		if r.SelectionRate >= 0 {
+			rate = fmt.Sprintf("%.1f%%", r.SelectionRate*100)
+		}
+		if r.ImpactRatio >= 0 {
+			ratio = fmt.Sprintf("%.3f", r.ImpactRatio)
+		}
+		note := ""
+		if r.IsReference {
+			note = "  (reference group)"
+		} else if r.BelowFourFifths {
+			note = "  <-- BELOW 0.80: flag for adverse-impact review"
+		}
+		fmt.Printf("  %-20s  %d/%d selected  rate %-6s  impact-ratio %s%s\n",
+			r.Group, r.Selected, r.Applicants, rate, ratio, note)
+	}
+	fmt.Printf("\nGroups flagged for adverse-impact review: %v\n", fourfifths.BelowFourFifths(groups))
+
+	var corpus [sha256.Size]byte
+	l := auditledger.New(corpus, []byte{})
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	entry := auditledger.Entry{
+		TenantID:         "tenant_alpha",
+		AEDTSystemID:     "aedt_recruiter_v2",
+		EntryType:        auditledger.EntryTypeEEOCFourFifthsImpact,
+		AuditPeriodStart: now.AddDate(0, -1, 0),
+		AuditPeriodEnd:   now,
+		SignoffStatus:    auditledger.SignoffNonApplicable,
+		SummaryHash:      fourfifths.SummaryHash(groups),
+	}
+	if _, err := l.Append(entry, now); err != nil {
+		fmt.Fprintf(os.Stderr, "demo Append four-fifths: %v\n", err)
+		os.Exit(3)
+	}
+	fmt.Printf("\nSealed audit-ledger entry: type=%s signoff=%s summary=%s…\n",
+		entry.EntryType, entry.SignoffStatus, fourfifths.SummaryHash(groups)[:16])
+	fmt.Println("\nSIGNAL against the EEOC four-fifths rule — NOT a legal determination.")
+	fmt.Println("Run `bias-audit footer liability` for the full liability footer.")
 }
 
 // demoCadenceCheck — illustrate the annual-cadence compliance report

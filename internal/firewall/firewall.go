@@ -18,10 +18,12 @@ import (
 //
 // 7 packages from inception per R174 5-of-5:
 // auditledger / firewall / honest / legal / lore / manifest / mirrormark.
+// +fourfifths (EEOC four-fifths impact-ratio calculator).
 func ExpectedPackages() []string {
 	return []string{
 		"auditledger",
 		"firewall",
+		"fourfifths",
 		"honest",
 		"legal",
 		"lore",
