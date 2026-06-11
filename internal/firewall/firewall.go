@@ -14,10 +14,15 @@ import (
 )
 
 // ExpectedPackages returns the canonical list of internal/ packages
-// bias-audit ships as of M6 (2026-05-27 launch).
+// bias-audit ships.
 //
-// 7 packages from inception per R174 5-of-5:
+// 7 packages from inception at M6 (2026-05-27 launch) per R174 5-of-5:
 // auditledger / firewall / honest / legal / lore / manifest / mirrormark.
+//
+// +1 on the R145.B sibling branch claude/stele-anchor-2026-06-11:
+// stele — the opt-in Stele verified-trust-spine anchoring client
+// (paired confinement pin: TestR145B_SteleAnchorConfinement).
+// Total = 8.
 func ExpectedPackages() []string {
 	return []string{
 		"auditledger",
@@ -27,6 +32,7 @@ func ExpectedPackages() []string {
 		"lore",
 		"manifest",
 		"mirrormark",
+		"stele",
 	}
 }
 

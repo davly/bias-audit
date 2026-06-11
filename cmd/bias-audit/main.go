@@ -31,6 +31,7 @@ import (
 	"github.com/davly/bias-audit/internal/lore"
 	"github.com/davly/bias-audit/internal/manifest"
 	"github.com/davly/bias-audit/internal/mirrormark"
+	"github.com/davly/bias-audit/internal/stele"
 )
 
 const version = "0.1.0-phase1-scaffold"
@@ -56,6 +57,13 @@ R153.A R-REGULATORY-ESCAPE-INVARIANT-WITH-AUDIT-LEDGER:
 R166 founder-drafted legal-document cohort: bias-audit's legal package
   ships ReviewedByCounsel = false honest-default. Flipping requires its
   own R145.B sibling-not-stacked branch with named counsel signoff.
+
+Stele spine anchoring (opt-in, off by default):
+  Set BIASAUDIT_STELE_URL (e.g. http://localhost:8097) to anchor each
+  ledger-writing command's run into the Stele verified-trust spine.
+  The ledger must pass its own SelfCheck first; a requested anchor
+  that fails (self-check, network, non-201) prints to stderr and
+  exits non-zero. Unset/empty = disabled: no network, no new output.
 
 Examples:
   bias-audit advisories
@@ -229,4 +237,30 @@ func demoCadenceCheck() {
 		}
 	}
 	fmt.Println("Mirror-Mark verify: PASS for all ledger entries.")
+
+	maybeAnchorToStele(l, "cadence-check")
+}
+
+// maybeAnchorToStele anchors the command's audit ledger into the
+// Stele spine when BIASAUDIT_STELE_URL is set. Unset/empty =
+// disabled: no self-check, no HTTP, no output — behavior identical
+// to a non-anchoring run. This is bias-audit's ONLY env read (R145.B
+// stele-anchor confinement pin in internal/firewall/).
+//
+// Honesty rules (load-bearing):
+//   - the sealed line prints ONLY after the spine returned
+//     201 + entry_hash (stele.AnchorRun enforces this);
+//   - a requested anchor that fails — ledger self-check, network,
+//     non-201 — prints to stderr and exits non-zero, so a missing
+//     anchor can never look like success.
+func maybeAnchorToStele(ledger *auditledger.Ledger, command string) {
+	rcpt, anchored, err := stele.AnchorRun(os.Getenv(stele.EnvURL), command, ledger, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stele anchor FAILED (%s set, anchor requested but NOT sealed): %v\n", stele.EnvURL, err)
+		os.Exit(1)
+	}
+	if !anchored {
+		return
+	}
+	fmt.Printf("stele anchor: sealed seq=%d entry_hash=%s\n", rcpt.Seq, rcpt.EntryHash)
 }
