@@ -455,3 +455,148 @@ func TestCanonicalPayload_ContainsKeyFields(t *testing.T) {
 		}
 	}
 }
+
+// TestSelfCheck_GreenAndDeterministic pins the SelfCheck contract used
+// by Stele spine anchoring: a healthy ledger self-checks green, and
+// the canonical run serialization is deterministic — the same entries
+// in the same order produce the same digest across independent
+// ledgers, and append ORDER is load-bearing.
+func TestSelfCheck_GreenAndDeterministic(t *testing.T) {
+	now := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	entryA := canonicalAnnualEntry(now)
+	entryB := Entry{
+		TenantID:               "tenant_beta",
+		AEDTSystemID:           "aedt_screener_v1",
+		EntryType:              EntryTypeEUAIActConformityAssessment,
+		AuditPeriodStart:       now.AddDate(0, -2, 0),
+		AuditPeriodEnd:         now,
+		IndependentAuditorName: "EU Notified Body 1234",
+		SignoffStatus:          SignoffPending,
+		SummaryHash:            "conformity_hash",
+	}
+
+	build := func(entries ...Entry) *Ledger {
+		l := newKATLedger()
+		for _, e := range entries {
+			if _, err := l.Append(e, now); err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+		}
+		return l
+	}
+
+	l1 := build(entryA, entryB)
+	n1, d1, err := l1.SelfCheck()
+	if err != nil {
+		t.Fatalf("SelfCheck on healthy ledger: %v", err)
+	}
+	if n1 != 2 {
+		t.Errorf("SelfCheck count: got %d, want 2", n1)
+	}
+	var zero [sha256.Size]byte
+	if d1 == zero {
+		t.Errorf("SelfCheck digest is zero for a non-empty ledger")
+	}
+
+	// Determinism: an independent ledger with the same entries
+	// appended at the same now produces the same digest.
+	_, d2, err := build(entryA, entryB).SelfCheck()
+	if err != nil {
+		t.Fatalf("SelfCheck on second ledger: %v", err)
+	}
+	if d1 != d2 {
+		t.Errorf("SelfCheck digest non-deterministic: %x vs %x", d1, d2)
+	}
+
+	// Order-sensitivity: append order is load-bearing for an
+	// append-only ledger — swapping entries MUST change the digest.
+	_, d3, err := build(entryB, entryA).SelfCheck()
+	if err != nil {
+		t.Fatalf("SelfCheck on swapped ledger: %v", err)
+	}
+	if d3 == d1 {
+		t.Errorf("SelfCheck digest insensitive to entry order: %x", d3)
+	}
+}
+
+// TestSelfCheck_DetectsTamper pins the integrity half of SelfCheck:
+// post-Append mutation of entry content or carried mark MUST fail the
+// self-check (this is the gate that keeps a tampered ledger from
+// being anchored LIT into the Stele spine).
+func TestSelfCheck_DetectsTamper(t *testing.T) {
+	now := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+	// Tampered entry content (direct slice mutation — the documented
+	// antipattern the self-check exists to surface).
+	l := newKATLedger()
+	if _, err := l.Append(canonicalAnnualEntry(now), now); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l.entries[0].SummaryHash = "tampered_hash"
+	if _, _, err := l.SelfCheck(); err == nil {
+		t.Errorf("SelfCheck accepted a tampered SummaryHash, want failure")
+	}
+
+	// Tampered mark (still cohort-prefixed so the prefix gate alone
+	// cannot catch it).
+	l2 := newKATLedger()
+	stamped, err := l2.Append(canonicalAnnualEntry(now), now)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l2.entries[0].Mark = stamped.Mark[:len(stamped.Mark)-2] + "xx"
+	if _, _, err := l2.SelfCheck(); err == nil {
+		t.Errorf("SelfCheck accepted a tampered mark, want failure")
+	}
+
+	// Mark missing the cohort prefix entirely.
+	l3 := newKATLedger()
+	if _, err := l3.Append(canonicalAnnualEntry(now), now); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l3.entries[0].Mark = "not-a-mark"
+	if _, _, err := l3.SelfCheck(); err == nil {
+		t.Errorf("SelfCheck accepted a prefix-less mark, want failure")
+	}
+}
+
+// TestSelfCheck_DetectsClosedSetMutation pins the cheap structural
+// re-validation: an entry whose closed-set enum fields were mutated
+// post-Append out of the R115 closed sets fails the self-check.
+func TestSelfCheck_DetectsClosedSetMutation(t *testing.T) {
+	now := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+
+	l := newKATLedger()
+	if _, err := l.Append(canonicalAnnualEntry(now), now); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l.entries[0].EntryType = "garbage_type"
+	if _, _, err := l.SelfCheck(); err == nil {
+		t.Errorf("SelfCheck accepted an out-of-enum EntryType, want failure")
+	}
+
+	l2 := newKATLedger()
+	if _, err := l2.Append(canonicalAnnualEntry(now), now); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	l2.entries[0].SignoffStatus = "garbage_status"
+	if _, _, err := l2.SelfCheck(); err == nil {
+		t.Errorf("SelfCheck accepted an out-of-enum SignoffStatus, want failure")
+	}
+}
+
+// TestSelfCheck_EmptyLedger pins the empty-ledger shape: zero entries
+// is not an integrity failure (count 0, the sha256 of the empty
+// stream, nil error).
+func TestSelfCheck_EmptyLedger(t *testing.T) {
+	n, d, err := newKATLedger().SelfCheck()
+	if err != nil {
+		t.Fatalf("SelfCheck on empty ledger: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("SelfCheck count on empty ledger: got %d, want 0", n)
+	}
+	if want := sha256.Sum256(nil); d != want {
+		t.Errorf("SelfCheck digest on empty ledger: got %x, want sha256 of empty stream %x", d, want)
+	}
+}

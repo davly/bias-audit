@@ -39,7 +39,7 @@ launch.
 | **Source files (Go, non-test)** | 8 (1 cmd + 7 internal) |
 | **Test files (Go)** | 8 (1 main_test + 7 internal package _test files) |
 | **Test funcs** | ~95 across all packages (lore 8 + mirrormark 14 + legal 10 + auditledger 25 + honest 16 + manifest 18 + firewall 9 + main 3) |
-| **Internal packages** | 7 (`auditledger` + `firewall` + `honest` + `legal` + `lore` + `manifest` + `mirrormark`) |
+| **Internal packages** | 7 at M6 (`auditledger` + `firewall` + `honest` + `legal` + `lore` + `manifest` + `mirrormark`); 8 since 2026-06-11 (+ `stele` — opt-in Stele spine anchoring client, R145.B branch `claude/stele-anchor-2026-06-11`) |
 | **CLI subcommands** | 6 (`advisories` / `cadence-check` / `footer` / `manifest` / `kat1` / `version`) |
 | **R143 advisories** | 5 (EEOC_REGULATED_ROLE_ESCAPE_INVARIANT Error + NYC_LL144_AEDT_BIAS_AUDIT_REQUIRED Warn + BIAS_AUDIT_INDEPENDENT_AUDITOR_REQUIRED Error + BIAS_AUDIT_CANDIDATE_NOTICE_10_BUSINESS_DAYS Warn + BIAS_AUDIT_PUBLIC_POSTING_REQUIRED Warn) |
 | **R150 manifest entries** | 11 (6 regulations + 3 cohort-rule pins + 1 R85 parity + 1 R153.A saturator marker) |
@@ -212,7 +212,12 @@ be refreshed:
 
 1. First HTTP listener (`http.ListenAndServe`) — Phase-2 HTTP API
 2. First DB persistence (`database/sql`) — per-tenant audit-ledger
-3. First env-var read (`os.Getenv`) — tenant key / signing key load
+3. First env-var read (`os.Getenv`) — **FIRED 2026-06-11** (this
+   refresh): single `os.Getenv(stele.EnvURL)` site in
+   `cmd/bias-audit/main.go` for the opt-in `BIASAUDIT_STELE_URL`
+   Stele spine anchoring; pinned by
+   `TestR145B_SteleAnchorConfinement`. Next env read (tenant key /
+   signing key load) re-fires this trigger
 4. First counsel-signoff flip (`ReviewedByCounsel = true`) — on its
    own R145.B sibling-not-stacked branch with paired commit-message
    naming the counsel + admission jurisdiction

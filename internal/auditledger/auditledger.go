@@ -46,6 +46,7 @@ package auditledger
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -380,6 +381,65 @@ func (l *Ledger) VerifyEntry(e Entry) error {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return mirrormark.Verify(e.Mark, l.corpus, CanonicalPayload(e), l.key)
+}
+
+// SelfCheck re-derives every entry's Mirror-Mark from its canonical
+// payload via the ledger's OWN corpus + key, and re-runs the cheap
+// closed-set structural checks (EntryType + SignoffStatus). On
+// success it returns the entry count plus the ledger digest; on the
+// first failure it returns a non-nil error and a zero digest
+// (callers MUST NOT anchor/attest a ledger whose self-check failed —
+// this is the gate internal/stele.AnchorRun enforces before sealing
+// a LIT run-anchor into the Stele spine).
+//
+// LEDGER DIGEST — canonical run serialization (documented contract):
+// sha256 over, for each Entry in append order,
+//
+//	json.Marshal(Entry) || '\n'
+//
+// Go's encoding/json marshals struct fields in declaration order
+// (TenantID, AEDTSystemID, EntryType, AuditPeriodStart,
+// AuditPeriodEnd, IndependentAuditorName, SignoffStatus, SignoffDate,
+// SummaryHash, PublicPostingURL, AppendedAt, Mark) and time.Time
+// marshals as RFC 3339, so the byte stream is deterministic:
+// identical entries in identical order produce an identical digest,
+// and any change to entry content, mark, or ORDER changes it. The
+// ledger is not hash-chained (Phase-1 in-memory scaffold), so this
+// digest is the canonical binding for a Stele spine anchor's
+// subject_hash.
+//
+// HONESTY: this is a SELF-check — the same corpus + key that stamped
+// the entries re-derives the marks. It surfaces post-Append tampering
+// of in-memory entries, but it is NOT an independent oracle and does
+// NOT prove the signing key is production-grade (the zero-value
+// dev/test seed self-checks green). Downstream consumers describing
+// this check MUST label it self-check, not gauntlet.
+func (l *Ledger) SelfCheck() (int, [sha256.Size]byte, error) {
+	var digest [sha256.Size]byte
+	snap := l.All() // RLock-guarded defensive copy; corpus + key are set at New and never mutated
+	h := sha256.New()
+	for i, e := range snap {
+		if !IsKnownEntryType(e.EntryType) {
+			return 0, digest, fmt.Errorf("auditledger: self-check failed: entry %d EntryType %q not in closed-set R115 enum", i, e.EntryType)
+		}
+		if !isKnownSignoffStatus(e.SignoffStatus) {
+			return 0, digest, fmt.Errorf("auditledger: self-check failed: entry %d SignoffStatus %q not in closed-set R115 enum", i, e.SignoffStatus)
+		}
+		if !strings.HasPrefix(e.Mark, mirrormark.MarkPrefix) {
+			return 0, digest, fmt.Errorf("auditledger: self-check failed: entry %d mark missing cohort-canonical prefix %q", i, mirrormark.MarkPrefix)
+		}
+		if mirrormark.Sign(l.corpus, CanonicalPayload(e), l.key) != e.Mark {
+			return 0, digest, fmt.Errorf("auditledger: self-check failed: entry %d mark does not re-derive from canonical payload (entry or mark tampered)", i)
+		}
+		line, err := json.Marshal(e)
+		if err != nil {
+			return 0, digest, fmt.Errorf("auditledger: self-check failed: entry %d serialization: %w", i, err)
+		}
+		h.Write(line)
+		h.Write([]byte{'\n'})
+	}
+	copy(digest[:], h.Sum(nil))
+	return len(snap), digest, nil
 }
 
 // AnnualCadenceCompliance returns the set of (tenantID, AEDTSystemID)

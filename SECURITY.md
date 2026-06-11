@@ -88,7 +88,7 @@ Three structural disclaimers up front:
 | 2 | Audit-ledger Append → in-memory storage | internal/auditledger/auditledger.go | `Append` validates: non-empty TenantID + AEDTSystemID; closed-set EntryType + SignoffStatus; AuditPeriodEnd > AuditPeriodStart; for NYC LL144 entries, 360 ≤ period ≤ 370 days; for SignoffAttested, non-zero SignoffDate + non-empty IndependentAuditorName. 7 typed sentinel errors. Mirror-Mark stamped at append time via the seeded corpus + key. | `internal/auditledger/auditledger_test.go` 25 tests pin every validation path + Mirror-Mark roundtrip + AnnualCadenceCompliance partition + defensive-copy + goroutine-safe concurrent appends + canonical-payload determinism. |
 | 3 | Closed-set vocabulary + R150 manifest | internal/manifest/manifest.go + internal/auditledger/auditledger.go + internal/honest/honest.go + internal/legal/legal.go | `Severity` ∈ 3-element closed set; `EntryType` ∈ 3-element; `SignoffStatus` ∈ 3-element; `ReviewerClass` ∈ 5-element; R143 advisory codes ∈ 5-element closed set; R150 manifest sources ∈ 11-element closed set; legal footers ∈ 3-element closed-set typed-constants (R166). | `internal/manifest/manifest_test.go` 18 tests pin the 11-entry seed + uniqueness + R166 ReviewedByCounsel=false default + jurisdiction populated + sources canonical. `internal/honest/honest_test.go` 16 tests pin advisory count + severity ladder + LoudOnce gate + goroutine safety. `internal/legal/legal_test.go` 10 tests pin ReviewedByCounsel=false + every regulatory citation present in footers. `internal/auditledger/auditledger_test.go` 25 tests pin EntryType / SignoffStatus closed-set guards. |
 | 4 | HMAC-SHA256 cohort cold-verify | internal/lore/lore.go + internal/mirrormark/mirrormark.go | KAT-1 hex `239a7d0d…` byte-identical across cohort (R151); `lore@v1:` 62-char mark format byte-identical to foundation/pkg/mirrormark (L43); HMAC + base64url use Go stdlib `crypto/hmac` + `crypto/sha256` + `encoding/base64` (R157 substrate-native idiom). All comparisons use `hmac.Equal` (constant-time). | `internal/lore/lore_test.go` 8 tests pin Compute → Digest equality + 33-byte canonical input shape + empty-key invariant + deterministic-roundtrip + single-bit-perturbation difference + OpenSSL recipe-literal present. `internal/mirrormark/mirrormark_test.go` 14 tests pin Sign roundtrip + KAT-1/6/7 mark literals + R132 mutual-stdlib derivation + 4 typed sentinel errors + fixed-62-character length. |
-| 5 | Zero-emit / zero-network / zero-DB library surface | (whole repo) | No `http.ListenAndServe`, no `net/http`, no `database/sql`, no `os.Getenv`, no `os.LookupEnv`, no `bcrypt`, no `password`, no `JWT`, no `crypto/tls`, no `crypto/rand` in production paths (only in `mirrormark_test.go::TestSign_RoundtripVerify` to generate test fixtures), no goroutine in production paths (only in `auditledger_test.go::TestAppend_GoroutineSafeWithMixedOperations` to exercise the `sync.RWMutex`), no `time.Now()` in production paths (callers pass `now time.Time` per R-pattern). No filesystem writes; no temp files; no panic recoveries; no signal handlers. CLI exits with non-zero code on error per stdlib `flag.ExitOnError`. | Grep-verified at M6: `grep -rn "net/http\|os.Getenv\|os.LookupEnv\|database/sql\|crypto/tls\|JWT\|jwt\|password\|bcrypt\|secret" cmd/ internal/` → **0 hits**. `grep -rn "http.ListenAndServe\|net.Listen" cmd/ internal/` → 0 hits. R142 CI workflow `go-build-test` + `go-security` (gosec + govulncheck) re-asserts on every PR. |
+| 5 | Zero-emit / zero-network / zero-DB library surface | (whole repo) | No `http.ListenAndServe`, no `net/http` outside `internal/stele/` (R145.B 2026-06-11 stele-anchor narrowing: client-only, 5s timeout, listener primitives banned everywhere incl. `internal/stele/`), no `database/sql`, no `os.Getenv` outside the single `os.Getenv(stele.EnvURL)` site in `cmd/bias-audit/main.go` (same R145.B branch; `BIASAUDIT_STELE_URL` unset = M6-identical behavior), no `os.LookupEnv`, no `bcrypt`, no `password`, no `JWT`, no `crypto/tls`, no `crypto/rand` in production paths (only in `mirrormark_test.go::TestSign_RoundtripVerify` to generate test fixtures), no goroutine in production paths (only in `auditledger_test.go::TestAppend_GoroutineSafeWithMixedOperations` to exercise the `sync.RWMutex`), no `time.Now()` in production paths (callers pass `now time.Time` per R-pattern; sole exception since R145.B 2026-06-11: `cmd/bias-audit` passes `time.Now().UTC()` into the opt-in `stele.AnchorRun` seam for the anchor's `sealed_at`). No filesystem writes; no temp files; no panic recoveries; no signal handlers. CLI exits with non-zero code on error per stdlib `flag.ExitOnError`. | Grep-verified at M6: `grep -rn "net/http\|os.Getenv\|os.LookupEnv\|database/sql\|crypto/tls\|JWT\|jwt\|password\|bcrypt\|secret" cmd/ internal/` → **0 hits**; since the 2026-06-11 R145.B stele-anchor branch the narrowed shape (net/http client confined to `internal/stele/`, exactly one `os.Getenv(stele.EnvURL)` site) is executable-pinned by `internal/firewall/firewall_test.go::TestR145B_SteleAnchorConfinement`. `grep -rn "http.ListenAndServe\|net.Listen" cmd/ internal/` → 0 hits. R142 CI workflow `go-build-test` + `go-security` (gosec + govulncheck) re-asserts on every PR. |
 
 ## R-pattern coverage matrix
 
@@ -99,8 +99,8 @@ Three structural disclaimers up front:
 | R143 | LOUD-ONCE-WARNING-FLAG | **Present** — `internal/honest/honest.go` ships 5 canonical advisories with `sync.Once`-gated emission + Reset + FindAdvisory + CanonicalAdvisories APIs. |
 | R143.A | SEVERITY-LADDER-CONVENTION | **Present** — 2 Error severities + 3 Warn severities; no Info. The Error tier covers EEOC regulated-role escape + independent-auditor required (R153 strict-liability surfaces); the Warn tier covers cadence advisories (NYC LL144 annual / candidate notice / public posting). |
 | R145 | strict additive | **Present (NEW repo)** — bias-audit is a NEW flagship repo from inception; no pre-existing surface to modify. R145 strict additive holds trivially. |
-| R145.B | SIBLING-NOT-STACKED | **Pending — but doc-noted** — counsel-signoff flip (`ReviewedByCounsel = false → true`) MUST land on its own R145.B sibling-not-stacked branch. This file documents the trigger. |
-| R145.C | FIREWALL-TEST-DISCIPLINE | **Present** — `internal/firewall/firewall.go` + `firewall_test.go` ships the canonical bidirectional drift detector covering all 7 internal packages + 1 cmd binary. R174 5-of-5 verified by `TestFirewall_AllFiveR174CohortPackagesPresent`. |
+| R145.B | SIBLING-NOT-STACKED | **Executed once (stele-anchor, 2026-06-11)** — branch `claude/stele-anchor-2026-06-11` narrowed the no-env-read + no-HTTP-client inception invariants with the paired confinement pin `TestR145B_SteleAnchorConfinement`. Counsel-signoff flip (`ReviewedByCounsel = false → true`) remains pending and MUST land on its own R145.B sibling-not-stacked branch. |
+| R145.C | FIREWALL-TEST-DISCIPLINE | **Present** — `internal/firewall/firewall.go` + `firewall_test.go` ships the canonical bidirectional drift detector covering all 8 internal packages (7 at M6 + `stele` registered 2026-06-11) + 1 cmd binary. R174 5-of-5 verified by `TestFirewall_AllFiveR174CohortPackagesPresent`. |
 | R150 | PARALLEL-MAP-R144-REVIEW-METADATA-SIBLING | **Present** — 11-entry R150 manifest in `internal/manifest/manifest.go` with `ReviewerClass` 5-class enum + Jurisdiction + StatuteVersion + ReviewedByCounsel + Confidence + FreshAt + Source + Description + Key fields. |
 | R150.E | REVIEWER-CLASS-EXTENSION-FIELD | **Present** — `ReviewerClass` field on every Entry; `ReviewerClassFounder` is the honest baseline. |
 | R151 | KAT-AS-COHORT-INVARIANT-CROSS-SUBSTRATE-PIN | **Present** — KAT-1 hex `239a7d0d3f1bbe3a98aede01e2ad818c2db60b7177c02e2f015035b2b5b7dbca` pinned at `internal/lore/lore.go:Digest`; OpenSSL one-liner cold-verify recipe in doc-comment + `kat1` CLI subcommand. |
@@ -138,11 +138,19 @@ Three structural disclaimers up front:
 7. **No money semantics in shipped scaffold** — no currency / value
    transfer; Phase 2 Stripe billing introduces these but they're
    not yet present.
-8. **No env var reads** — `grep -rn "os.Getenv\|os.LookupEnv"`
-   across `cmd/` + `internal/` returns 0 hits at M6.
-9. **No HTTP listener / no HTTP client** — `grep -rn
-   "net/http\|http.Get\|http.ListenAndServe"` across `cmd/` +
-   `internal/` returns 0 hits at M6.
+8. **One env var read (R145.B 2026-06-11; was none at M6)** — the
+   stele-anchor branch added the single permitted read
+   `os.Getenv(stele.EnvURL)` (`BIASAUDIT_STELE_URL`) in
+   `cmd/bias-audit/main.go`. Unset/empty = anchoring disabled =
+   M6-identical behavior. `os.LookupEnv` / `os.Environ` stay
+   banned. Pinned by `TestR145B_SteleAnchorConfinement`.
+9. **No HTTP listener; HTTP client confined to `internal/stele/`
+   (R145.B 2026-06-11; was none at M6)** — a 5s-timeout stdlib
+   client POSTs run anchors to the Stele spine's `/v1/verdicts`,
+   only when `BIASAUDIT_STELE_URL` is set and only after the
+   ledger passes `SelfCheck()`. Listener primitives stay banned
+   everywhere, including `internal/stele/`. Pinned by
+   `TestR145B_SteleAnchorConfinement`.
 10. **No daemon mode** — `cmd/bias-audit` is a one-shot CLI; argv
     → output → exit. Phase-2 daemon mode activates R175 criterion
     3 boot-time R143 LOUD-ONCE-WARN.
@@ -174,8 +182,11 @@ refreshed before merging:
 1. First HTTP listener (`http.ListenAndServe`) — Phase-2 HTTP API.
 2. First DB persistence (`database/sql` or sqlite) — per-tenant
    audit-ledger.
-3. First env-var read (`os.Getenv`) — tenant signing key load /
-   Stripe API key / SES/SendGrid API key.
+3. First env-var read (`os.Getenv`) — **FIRED 2026-06-11** (this
+   refresh): `BIASAUDIT_STELE_URL` opt-in Stele spine anchoring,
+   single read site in `cmd/bias-audit/main.go`. The NEXT env read
+   (tenant signing key load / Stripe API key / SES/SendGrid API
+   key) re-fires this trigger.
 4. First counsel-signoff flip (`ReviewedByCounsel = true`) — on its
    own R145.B sibling-not-stacked branch with paired commit-message.
 5. First money semantics — Phase-2 Stripe billing activates R151.
