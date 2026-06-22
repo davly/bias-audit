@@ -22,12 +22,19 @@ import (
 // +1 on the R145.B sibling branch claude/stele-anchor-2026-06-11:
 // stele — the opt-in Stele verified-trust-spine anchoring client
 // (paired confinement pin: TestR145B_SteleAnchorConfinement).
-// Total = 8.
+//
+// +1 cross-pollination (godfather/xpoll-biasaudit-air): impact — the
+// first-party EEOC four-fifths adverse-impact producer that lights up
+// the dormant EntryTypeEEOCFourFifthsImpact row by delegating the AIR
+// + Wilson-CI math to the foundation primitive
+// github.com/davly/reality/fairness (same package canopy consumes).
+// Total = 9.
 func ExpectedPackages() []string {
 	return []string{
 		"auditledger",
 		"firewall",
 		"honest",
+		"impact",
 		"legal",
 		"lore",
 		"manifest",
