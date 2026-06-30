@@ -25,6 +25,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/davly/reality/fairness"
@@ -125,8 +126,106 @@ func Compute(counts []GroupCount) Report {
 		Pass:       rep.Pass,
 		Applicable: rep.Applicable,
 	}
+
+	// EXACT-ARITHMETIC VERDICT CORRECTION.
+	//
+	// The donor primitive evaluates the four-fifths verdict in float64:
+	//   AIR = minRate/maxRate;  Pass = AIR >= 0.80
+	// where minRate and maxRate are themselves float64 divisions. At the
+	// regulatory cutoff this drifts: a selection process whose Adverse-
+	// Impact Ratio is EXACTLY 4/5 (e.g. 2/3 vs 5/6 = 12/15, or 3/5 vs 3/4
+	// = 12/15) computes as 0.79999999999999993 and is WRONGLY recorded as
+	// FAIL (adverse impact flagged) when the EEOC rule — air >= 80% — says
+	// it PASSES. An enumeration over all (selected,total) pairs for total
+	// in 1..64 finds 2616 such boundary pairs flipped by float rounding
+	// (and zero flips in the opposite direction). Because this verdict is
+	// sealed by SHA-256 into an append-only legal ledger, a regulator who
+	// re-runs the raw counts through the exact rational rule would
+	// reproduce a DIFFERENT (correct) Pass than the stored float verdict.
+	//
+	// We therefore recompute Pass with exact integer cross-multiplication
+	// at the cutoff, leaving AIR (a display value) and the Wilson
+	// intervals untouched. This ONLY corrects the boundary: it never flips
+	// a genuinely-failing (AIR < 4/5) process to PASS. Applicability is
+	// governed by the donor (a non-Applicable report keeps Pass=false).
+	if rep.Applicable {
+		r.Pass = exactFourFifthsPass(counts)
+	}
+
 	r.Hash = hashCanonical(r)
 	return r
+}
+
+// exactFourFifthsPass recomputes the EEOC four-fifths pass/fail verdict
+// using exact integer arithmetic, eliminating the float64 boundary drift
+// in which an Adverse-Impact Ratio of exactly 4/5 rounds below 0.80.
+//
+// It selects the least- and most-selected groups (over groups with
+// Total > 0) by EXACT rational comparison — matching the donor's float
+// pick for all realistic counts but immune to rounding — then evaluates
+// the four-fifths rule as the exact cross-multiplication:
+//
+//	(minSel/minTot) / (maxSel/maxTot) >= 4/5
+//	  <=>  5 * minSel * maxTot >= 4 * maxSel * minTot
+//
+// All products are computed with math/big so arbitrarily large
+// protected-class counts can never overflow. It returns false when the
+// rule is not applicable (fewer than two groups with Total > 0, or no
+// selections in the highest-rate group), mirroring the donor's
+// Applicable semantics.
+func exactFourFifthsPass(counts []GroupCount) bool {
+	var have bool
+	var minSel, minTot, maxSel, maxTot int
+	eligible := 0
+	for _, c := range counts {
+		if c.Total <= 0 {
+			continue
+		}
+		eligible++
+		if !have {
+			minSel, minTot = c.Selected, c.Total
+			maxSel, maxTot = c.Selected, c.Total
+			have = true
+			continue
+		}
+		// c is the new minimum if its rate < current min rate, i.e.
+		// c.Selected/c.Total < minSel/minTot.
+		if lessRational(c.Selected, c.Total, minSel, minTot) {
+			minSel, minTot = c.Selected, c.Total
+		}
+		// c is the new maximum if current max rate < c's rate.
+		if lessRational(maxSel, maxTot, c.Selected, c.Total) {
+			maxSel, maxTot = c.Selected, c.Total
+		}
+	}
+	// maxSel <= 0 means the highest-rate group selected no one, so every
+	// rate is 0 — the rule is not meaningful (matches maxRate <= 0).
+	if eligible < 2 || maxSel <= 0 {
+		return false
+	}
+	// 5*minSel*maxTot >= 4*maxSel*minTot, exact and overflow-free.
+	left := mulInts(5, minSel, maxTot)
+	right := mulInts(4, maxSel, minTot)
+	return left.Cmp(right) >= 0
+}
+
+// lessRational reports whether aSel/aTot < bSel/bTot for non-negative
+// counts with positive totals, using exact cross-multiplication
+// (aSel*bTot < bSel*aTot) so the ordering never depends on float
+// rounding. Computed with math/big to avoid integer overflow.
+func lessRational(aSel, aTot, bSel, bTot int) bool {
+	lhs := mulInts(aSel, bTot)
+	rhs := mulInts(bSel, aTot)
+	return lhs.Cmp(rhs) < 0
+}
+
+// mulInts returns the exact product of its arguments as a big.Int.
+func mulInts(vals ...int) *big.Int {
+	acc := big.NewInt(1)
+	for _, v := range vals {
+		acc.Mul(acc, big.NewInt(int64(v)))
+	}
+	return acc
 }
 
 // CanonicalCSV returns the deterministic byte serialization of a Report
